@@ -6,15 +6,15 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     
     <title>DEX Movers - Top Gainers on Solana, Ethereum, BNB & Base</title>
-    
     <meta name="description" content="Track top performing liquidity pools and tokens across Solana, Ethereum, BNB Chain, and Base. Real-time DEX gainers and losers.">
     <meta name="keywords" content="dex gainers, solana top gainers, base chain movers, raydium gainers, uniswap top tokens, geckoterminal api">
     <meta name="author" content="TraderAbba">
 
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://cryptomovers.pages.dev/dex-movers.html">
     <meta property="og:title" content="DEX Movers | Cross-Chain Analytics">
     <meta property="og:description" content="Top 20 Gainers & Losers on Solana, Ethereum, BNB, and Base.">
     <meta property="og:image" content="https://cryptomovers.pages.dev/images/social-media.jpg">
-    <meta property="og:type" content="website">
 
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="DEX Movers | Cross-Chain Analytics">
@@ -52,7 +52,7 @@
 
     <div id="loader">
         <div class="spinner"></div>
-        <p>Analyzing On-Chain Data...</p>
+        <p>Scanning On-Chain Data...</p>
     </div>
 
     <main id="app-content">
@@ -137,7 +137,7 @@
     
             <div class="modal-grid">
                 <div class="stat-box">
-                    <span class="label">Pool Liquidity</span>
+                    <span class="label">Market Cap</span>
                     <span class="value" id="m-cap">$0</span>
                 </div>
                 <div class="stat-box">
@@ -147,18 +147,14 @@
             </div>
     
             <div class="modal-history">
-                <h3>Pool Performance</h3>
-                <div class="history-row">
-                    <span>24h Change</span> <span id="m-24h" class="percent-tag">0%</span>
                 </div>
-                <div class="history-row">
-                    <span>Network</span> <span id="m-network" class="percent-tag gray">--</span>
-                </div>
-            </div>
     
             <div class="modal-actions">
                 <a id="m-link-cg" href="#" target="_blank" class="action-btn cg-btn">
-                     <i class="fas fa-circle-nodes"></i> GeckoTerminal
+                     <i class="fas fa-coins"></i> CoinGecko
+                </a>
+                <a id="m-link-tv" href="#" target="_blank" class="action-btn tv-btn">
+                    <i class="fas fa-chart-line"></i> TradingView
                 </a>
             </div>
         </div>
@@ -166,4 +162,4 @@
 
     <script src="script.js"></script>
 </body>
-</html>j
+</html>
