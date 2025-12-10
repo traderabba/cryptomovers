@@ -168,9 +168,12 @@ h2 { font-size: 20px; display: inline-flex; align-items: center; gap: 10px; font
 
 .modal-actions { display: flex; gap: 10px; }
 .action-btn { flex: 1; padding: 12px; border-radius: 12px; display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; font-weight: 600; font-size: 14px; transition: transform 0.2s; }
-.action-btn:hover { transform: translateY(-2px); }
-.cg-btn { background: #f1f5f9; color: #0f172a; }
-.tv-btn { background: #0f172a; color: white; }
+.action-btn:hover { transform: translateY(-2px); filter: brightness(110%); }
+.cg-btn { 
+    background: #8CC542; 
+    box-shadow: 0 4px 10px rgba(140, 197, 66, 0.3); }
+.tv-btn { background: #000000;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3); }
 
 
 /* --- MODERN DARK FOOTER --- */
