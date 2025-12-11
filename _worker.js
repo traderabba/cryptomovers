@@ -10,7 +10,7 @@ const CEX_RETRY_DELAY_MS = 2 * 60 * 1000;
 const TIMEOUT_MS = 45000; 
 
 // --- DEX TIMERS ---
-const DEX_CACHE_KEY = "dex_data_v4"; // Bumped version for new logic         
+const DEX_CACHE_KEY = "dex_data_v5"; // Version bump for new filter    
 const DEX_LOCK_KEY = "dex_data_lock";          
 const DEX_SOFT_REFRESH_MS = 18 * 60 * 1000;    
 const DEX_LOCK_TIMEOUT_MS = 120000;            
@@ -156,12 +156,7 @@ async function handleDexStats(request, env, ctx) {
             let pairs = fullData.pairs || [];
             if (target) pairs = pairs.filter(p => p.platform === target);
 
-            // We trust API sort, but re-sort just in case merging pages messed it up
             const gainers = [...pairs].sort((a, b) => b.change_24h - a.change_24h).slice(0, 20);
-            // Losers might need a separate API call strategy in future if we only fetch gainers, 
-            // but for now we take the bottom of the returned list if available, or just empty.
-            // *NOTE*: Sorting by percent_change_24h desc means the end of the list are the smallest gainers, not necessarily losers.
-            // For true losers, we'd need a separate call. For now, we display what we have.
             const losers = [...pairs].sort((a, b) => a.change_24h - b.change_24h).slice(0, 20);
 
             return new Response(JSON.stringify({
@@ -217,18 +212,15 @@ async function fetchCMC_DEX(env) {
     const apiKey = env.CMC_PRO_API_KEY;
     const exclusionSet = await getExclusions(env);
     
-    // FETCH STRATEGY: 
-    // We sort by 'percent_change_24h' DESCENDING.
-    // We strictly filter for liquidity > $10k inside the API call.
-    // This ensures every single result is a "Real Gainer".
+    // We fetch 3 pages to get enough candidates
     const PAGES_TO_FETCH = 3; 
     let allPairs = [];
     let nextScrollId = null;
 
     for (let i = 0; i < PAGES_TO_FETCH; i++) {
         try {
-            // UPDATED PARAMS: sort=percent_change_24h, liquidity_min=10000
-            let url = 'https://pro-api.coinmarketcap.com/v4/dex/spot-pairs/latest?limit=100&sort=percent_change_24h&sort_dir=desc&network_slug=ethereum,solana,bsc,base&liquidity_min=10000';
+            // UPDATED: liquidity_min=20000 (Base Requirement)
+            let url = 'https://pro-api.coinmarketcap.com/v4/dex/spot-pairs/latest?limit=100&sort=percent_change_24h&sort_dir=desc&network_slug=ethereum,solana,bsc,base&liquidity_min=20000';
             
             if (nextScrollId) {
                 url += `&scroll_id=${nextScrollId}`;
@@ -239,7 +231,6 @@ async function fetchCMC_DEX(env) {
             });
 
             if (!dexRes.ok) {
-                 // Capture error on first page fail
                  if(i===0) {
                      const txt = await dexRes.text();
                      throw new Error(`CMC API Error: ${txt}`);
@@ -259,19 +250,24 @@ async function fetchCMC_DEX(env) {
 
         } catch (e) {
             console.error(`Page ${i+1} fetch failed:`, e);
-            if(i===0) throw e; // Rethrow if page 1 fails
+            if(i===0) throw e; 
             break; 
         }
     }
 
-    // 2. Filter Exclusions (We already filtered liquidity in API, but we double check + exclusions)
+    // FILTERING LOGIC
     const filteredRaw = allPairs.filter(p => {
         const symbol = p.base_asset_symbol || "";
         if (exclusionSet.has(symbol.toLowerCase())) return false;
         
-        // Safety check if API ignored param
+        // 1. Confirm Base Liquidity (20k)
         const liquidity = parseFloat(p.liquidity || 0);
-        if (liquidity < 10000) return false;
+        if (liquidity < 20000) return false;
+
+        // 2. === FAKE MC FILTER ===
+        // If MC > 3M but Liquidity < 150k -> Trash
+        const mc = parseFloat(p.fully_diluted_value || p.market_cap || 0);
+        if (mc > 3000000 && liquidity < 150000) return false;
 
         return true;
     });
