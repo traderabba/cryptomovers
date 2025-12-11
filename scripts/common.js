@@ -1,18 +1,21 @@
 // common.js
-// Handles: Mobile Menu, Snapshots, and shared UI logic
+// Universal UI Logic: Menu, Modals, and Smart Snapshots
 
-document.addEventListener('DOMContentLoaded', setupMenu);
+document.addEventListener('DOMContentLoaded', () => {
+    setupMenu();
+    setupModalClosers();
+});
 
+// 1. MENU LOGIC
 function setupMenu() {
     const hamburger = document.getElementById('mobile-menu');
     const navMenu = document.querySelector('.nav-menu');
     const navLinks = document.querySelectorAll('.nav-link');
 
-    if(hamburger && navMenu) {
-        // Remove old listeners if any to prevent duplicates
+    if (hamburger && navMenu) {
         const newHamburger = hamburger.cloneNode(true);
         hamburger.parentNode.replaceChild(newHamburger, hamburger);
-        
+
         newHamburger.addEventListener('click', (e) => {
             e.stopPropagation();
             newHamburger.classList.toggle('active');
@@ -20,7 +23,9 @@ function setupMenu() {
         });
 
         document.addEventListener('click', (e) => {
-            if(navMenu.classList.contains('active') && !navMenu.contains(e.target) && !newHamburger.contains(e.target)) {
+            if (navMenu.classList.contains('active') && 
+                !navMenu.contains(e.target) && 
+                !newHamburger.contains(e.target)) {
                 newHamburger.classList.remove('active');
                 navMenu.classList.remove('active');
             }
@@ -35,28 +40,40 @@ function setupMenu() {
     }
 }
 
-// Global Modal Closer (Close when clicking outside)
-window.onclick = function(event) {
+// 2. MODAL LOGIC
+function setupModalClosers() {
     const modal = document.getElementById('coin-modal');
-    if (event.target === modal) {
-        modal.classList.remove('active');
+    if (modal) {
+        window.addEventListener('click', (e) => {
+            if (e.target === modal) document.getElementById('coin-modal').classList.remove('active');
+        });
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') document.getElementById('coin-modal').classList.remove('active');
+        });
     }
-};
+}
 
 function closeModal() {
     document.getElementById('coin-modal').classList.remove('active');
 }
 
+// 3. SNAPSHOT LOGIC
 async function captureSection(type) {
     const btn = document.getElementById(type === 'gainers' ? 'btn-gain' : 'btn-lose');
+    if (!btn) return;
+
     const originalText = btn.innerHTML;
     const sourceListId = type === 'gainers' ? 'gainers-list' : 'losers-list';
-    
-    // Safety check: ensure list exists
     const listElement = document.getElementById(sourceListId);
+    
     if (!listElement) return;
 
     const count = listElement.children.length;
+
+    // --- SMART TITLE DETECTION ---
+   
+    const isDexPage = window.location.pathname.includes('dex-movers');
+    const pageLabel = isDexPage ? 'DEX' : 'Crypto'; // "Top DEX Gainers" vs "Top Crypto Gainers"
     
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating HD...';
     btn.disabled = true;
@@ -71,7 +88,7 @@ async function captureSection(type) {
         });
 
         const titleIcon = type === 'gainers' ? '🔥' : '💀';
-        const titleText = type === 'gainers' ? `Top ${count} Gainers (24H)` : `Top ${count} Losers (24H)`;
+        const titleText = `${pageLabel} Top ${count} ${type === 'gainers' ? 'Gainers' : 'Losers'} (24H)`;
         const titleColor = type === 'gainers' ? '#15803d' : '#b91c1c';
 
         reportCard.innerHTML = `
@@ -94,17 +111,24 @@ async function captureSection(type) {
             const clone = b.cloneNode(true);
             if (type === 'gainers') clone.classList.add('force-gainer');
             else clone.classList.add('force-loser');
+            
             Object.assign(clone.style, { width: '100%', height: '180px', margin: '0', boxShadow: '0 15px 30px rgba(0,0,0,0.08)' });
+            
             const img = clone.querySelector('img');
             Object.assign(img.style, { width: '64px', height: '64px', marginBottom: '12px' });
+            
             const symbol = clone.querySelector('.symbol');
             symbol.style.fontSize = '22px';
+            
             const percent = clone.querySelector('.percent');
             percent.style.fontSize = '20px';
+            
             gridContainer.appendChild(clone);
         });
 
         reportCard.appendChild(gridContainer);
+        
+        // --- SNAP FOOTER ---
         reportCard.insertAdjacentHTML('beforeend', `
             <div style="font-size: 18px; color: #64748b; font-weight: 600; margin-top: 30px; display:flex; align-items:center; gap:10px;">
                 <img src="/images/bullish.png" style="width:30px;">
@@ -113,13 +137,14 @@ async function captureSection(type) {
         `);
 
         document.body.appendChild(reportCard);
-        // Using scale
+        
         const canvas = await html2canvas(reportCard, { scale: 3, useCORS: true, backgroundColor: null });
         const link = document.createElement('a');
-        link.download = `CTDGL_${type}_Top${count}_${new Date().toISOString().split('T')[0]}.png`;
+        link.download = `CTDGL_${pageLabel}_Top${count}_${new Date().toISOString().split('T')[0]}.png`;
         link.href = canvas.toDataURL("image/png");
         link.click();
         document.body.removeChild(reportCard);
+
     } catch (err) {
         console.error("Snapshot failed:", err);
         alert("Failed to create report.");
