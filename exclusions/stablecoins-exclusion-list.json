@@ -1,1 +1,22 @@
-["usdt", "usdc", "dai", "fdusd", "tusd"]
+[
+    "USDT",
+    "USDC",
+    "DAI",
+    "FDUSD",
+    "PYUSD",
+    "USDE",
+    "USDS",
+    "TUSD",
+    "USDP",
+    "GUSD",
+    "FRAX",
+    "LUSD",
+    "GHO",
+    "CRVUSD",
+    "USDD",
+    "RLUSD",
+    "EURC",
+    "EURT",
+    "PAXG",
+    "XAUT" 
+]
