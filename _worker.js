@@ -1,7 +1,7 @@
 // _worker.js
 
 // === CONFIGURATION ===
-const CACHE_KEY = "market_data_v7"; 
+const CACHE_KEY = "market_data_v8"; // Verified Version
 const CACHE_LOCK_KEY = "market_data_lock";
 
 // --- CEX TIMERS ---
@@ -10,9 +10,9 @@ const CEX_RETRY_DELAY_MS = 2 * 60 * 1000;
 const TIMEOUT_MS = 45000; 
 
 // --- DEX TIMERS ---
-const DEX_CACHE_KEY = "dex_data_v7"; // Version bump      
+const DEX_CACHE_KEY = "dex_data_v8";           
 const DEX_LOCK_KEY = "dex_data_lock";
-const NETWORKS_CACHE_KEY = "dex_networks_map"; // Cache for network slugs          
+const NETWORKS_CACHE_KEY = "dex_networks_map"; // Cache for valid slugs          
 const DEX_SOFT_REFRESH_MS = 18 * 60 * 1000;    
 const DEX_LOCK_TIMEOUT_MS = 120000;            
 
@@ -31,9 +31,11 @@ const HEADERS = {
     "Expires": "0"
 };
 
+// === STEALTH HEADERS (Critical for CoinGecko) ===
 const API_HEADERS = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://www.coingecko.com/"
 };
 
@@ -87,12 +89,15 @@ async function handleCexStats(request, env, ctx) {
 
         const isUpdating = lock && (now - parseInt(lock)) < DEX_LOCK_TIMEOUT_MS;
 
+        // Fresh -> Serve
         if (cachedData && dataAge < CEX_SOFT_REFRESH_MS) {
             return new Response(cachedRaw, { headers: { ...HEADERS, "X-Source": "Cache-Fresh" } });
         }
+        // Updating -> Serve Stale
         if (isUpdating && cachedData) {
             return new Response(cachedRaw, { headers: { ...HEADERS, "X-Source": "Cache-UpdateInProgress" } });
         }
+        // Stale -> Background Update
         if (cachedData && dataAge >= CEX_SOFT_REFRESH_MS) {
             const lastAttemptAge = now - (cachedData.lastUpdateAttempt || 0);
             if (lastAttemptAge >= CEX_RETRY_DELAY_MS) {
@@ -103,6 +108,7 @@ async function handleCexStats(request, env, ctx) {
             return new Response(cachedRaw, { headers: { ...HEADERS, "X-Source": "Cache-RateLimited" } });
         }
 
+        // Empty -> Blocking Fetch
         await env.KV_STORE.put(CACHE_LOCK_KEY, now.toString(), { expirationTtl: 120 });
         try {
             const freshJson = await fetchWithTimeout(env, false);
@@ -120,7 +126,7 @@ async function handleCexStats(request, env, ctx) {
 }
 
 // ==========================================
-// 2. DEX HANDLER (CMC Logic)
+// 2. DEX HANDLER (CMC Logic - Auto Detecting)
 // ==========================================
 async function handleDexStats(request, env, ctx) {
     const url = new URL(request.url);
@@ -181,7 +187,6 @@ async function handleDexStats(request, env, ctx) {
             return filterResponse(dexData, "Cache-Proactive"); 
         }
 
-        // Blocking Fetch
         await env.KV_STORE.put(DEX_LOCK_KEY, now.toString(), { expirationTtl: 120 });
         try {
             const freshData = await fetchCMC_DEX(env);
@@ -193,20 +198,18 @@ async function handleDexStats(request, env, ctx) {
             if (dexData) return filterResponse(dexData, "Cache-Fallback-Error");
             return new Response(JSON.stringify({ error: true, message: e.message }), { status: 500, headers: HEADERS });
         }
-
     } catch (e) {
         return new Response(JSON.stringify({ error: true, message: e.message }), { status: 500, headers: HEADERS });
     }
 }
 
-// === NEW: NETWORK SLUG DISCOVERY ===
+// === SELF-HEALING: NETWORK SLUG DISCOVERY ===
 async function getNetworkSlugsString(env) {
-    // 1. Check Cache
     const cached = await env.KV_STORE.get(NETWORKS_CACHE_KEY);
     if(cached) return cached;
 
-    // 2. Fetch from CMC
     try {
+        // Ask CMC for the official list of networks
         const res = await fetch('https://pro-api.coinmarketcap.com/v4/dex/networks/list', {
             headers: { 'X-CMC_PRO_API_KEY': env.CMC_PRO_API_KEY }
         });
@@ -215,26 +218,19 @@ async function getNetworkSlugsString(env) {
         
         const json = await res.json();
         const networks = json.data || [];
-        
-        // Find our target slugs
-        const targetNames = ["Ethereum", "BNB", "Solana", "Base"];
         const foundSlugs = [];
 
         networks.forEach(n => {
-            // Check if name matches any target (Case insensitive check)
             const name = n.name.toLowerCase();
             const slug = n.network_slug;
-            
+            // Fuzzy match the names to find the official slugs
             if (name.includes("ethereum") || name.includes("bnb") || name.includes("solana") || name.includes("base") || name.includes("binance")) {
                 if(slug) foundSlugs.push(slug);
             }
         });
 
-        // Ensure we at least have safe defaults if detection fails slightly
         const finalString = foundSlugs.length > 0 ? foundSlugs.join(',') : "ethereum,solana,bnb,base";
-        
-        // Cache for 24 Hours
-        await env.KV_STORE.put(NETWORKS_CACHE_KEY, finalString, { expirationTtl: 86400 });
+        await env.KV_STORE.put(NETWORKS_CACHE_KEY, finalString, { expirationTtl: 86400 }); // Save for 24h
         return finalString;
 
     } catch(e) {
@@ -248,16 +244,17 @@ async function fetchCMC_DEX(env) {
     const apiKey = env.CMC_PRO_API_KEY;
     const exclusionSet = await getExclusions(env);
     
-    // 1. GET CORRECT NETWORK SLUGS DYNAMICALLY
+    // 1. GET CORRECT SLUGS DYNAMICALLY
     const networkSlugs = await getNetworkSlugsString(env);
-    console.log("Using Network Slugs:", networkSlugs);
 
+    // 2. Fetch 3 Pages
     const PAGES_TO_FETCH = 3; 
     let allPairs = [];
     let nextScrollId = null;
 
     for (let i = 0; i < PAGES_TO_FETCH; i++) {
         try {
+            // Updated Params: sort=percent_change_24h, liquidity_min=20000
             let url = `https://pro-api.coinmarketcap.com/v4/dex/spot-pairs/latest?limit=100&sort=percent_change_24h&sort_dir=desc&network_slug=${networkSlugs}&liquidity_min=20000`;
             
             if (nextScrollId) {
@@ -271,19 +268,14 @@ async function fetchCMC_DEX(env) {
             if (!dexRes.ok) {
                  if(i===0) {
                      const txt = await dexRes.text();
-                     try {
-                        const errObj = JSON.parse(txt);
-                        throw new Error(`CMC Error: ${errObj.status?.error_message || txt}`);
-                     } catch(e) {
-                        throw new Error(`CMC Error: ${txt}`);
-                     }
+                     try { throw new Error(`CMC Error: ${JSON.parse(txt).status?.error_message || txt}`); } 
+                     catch(e) { throw new Error(`CMC Error: ${txt}`); }
                  }
                  break; 
             }
 
             const dexJson = await dexRes.json();
             const pairs = dexJson.data || [];
-            
             if (pairs.length === 0) break;
 
             allPairs = allPairs.concat(pairs);
@@ -297,23 +289,23 @@ async function fetchCMC_DEX(env) {
         }
     }
 
-    // 2. FILTERING LOGIC (With FAKE MC Trap)
+    // 3. APPLY FILTERS (Honeypot/Trash Filter)
     const filteredRaw = allPairs.filter(p => {
         const symbol = p.base_asset_symbol || "";
         if (exclusionSet.has(symbol.toLowerCase())) return false;
         
-        // Liquidity Check > 20k
+        // Liquidity Check (Double confirm)
         const liquidity = parseFloat(p.liquidity || 0);
         if (liquidity < 20000) return false;
 
-        // FAKE MC Trap: MC > 3M but Liq < 150k
+        // FAKE MC Trap: MC > 3M but Liquidity < 150k
         const mc = parseFloat(p.fully_diluted_value || p.market_cap || 0);
         if (mc > 3000000 && liquidity < 150000) return false;
 
         return true;
     });
 
-    // 3. Side-load Metadata
+    // 4. Metadata (Logos)
     const top100ForMetadata = filteredRaw.slice(0, 100);
     const assetIds = [...new Set(top100ForMetadata.map(p => p.base_asset_id))].filter(id => id);
     
@@ -327,7 +319,7 @@ async function fetchCMC_DEX(env) {
                 const metaJson = await metaRes.json();
                 Object.values(metaJson.data || {}).forEach(info => { logoMap[info.id] = info.logo; });
             }
-        } catch (e) { console.error("Metadata fetch failed", e); }
+        } catch (e) {}
     }
 
     const formattedPairs = filteredRaw.map(p => ({
@@ -390,18 +382,22 @@ async function fetchWithTimeout(env, isDeepScan) {
     } catch (err) {
         clearTimeout(timeoutId);
         if (err.name === 'AbortError') throw new Error("Request timeout. Try again.");
+        if (err.message.includes("Rate Limit") || err.message.includes("429")) throw new Error("CoinGecko Busy (429). Wait 1 min.");
         throw err;
     }
 }
 
-// === CEX FETCH LOGIC ===
+// === CEX FETCH LOGIC (ORIGINAL & RESTORED) ===
 async function updateMarketData(env, existingData, isDeepScan, signal = null) {
+    const updateAttemptTime = Date.now();
+    const pages = isDeepScan ? [1, 2, 3, 4, 5, 6] : [1];
     const perPage = 250; 
     let allCoins = [];
-    const exclusionSet = await getExclusions(env);
-    
-    const pages = isDeepScan ? [1, 2, 3, 4, 5, 6] : [1];
     let hitRateLimit = false;
+    let lastError = null;
+    const exclusionSet = await getExclusions(env);
+
+    // Use STEALTH HEADERS from top of file
     const config = { headers: API_HEADERS };
     if (signal) config.signal = signal;
 
@@ -409,7 +405,7 @@ async function updateMarketData(env, existingData, isDeepScan, signal = null) {
         if (hitRateLimit) break;
         let attempts = 0;
         let success = false;
-        while(attempts < 2 && !success) {
+        while(attempts < 2 && !success && !hitRateLimit) {
             attempts++;
             try {
                 const res = await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${perPage}&page=${page}&price_change_percentage=24h,7d,30d,1y`, config);
@@ -419,13 +415,21 @@ async function updateMarketData(env, existingData, isDeepScan, signal = null) {
                 allCoins = allCoins.concat(data);
                 success = true;
                 if(pages.length > 1) await new Promise(r => setTimeout(r, 2000));
-            } catch(e) { if(attempts==2) console.log(e); else await new Promise(r => setTimeout(r, 2000)); }
+            } catch(e) { if(attempts==2) lastError=e.message; else await new Promise(r => setTimeout(r, 2000)); }
         }
     }
 
-    if (allCoins.length === 0 && existingData) return existingData; 
-    
-    const valid = allCoins.filter(c => c && c.symbol && !exclusionSet.has(c.symbol.toLowerCase()));
+    if (allCoins.length === 0) {
+        if (existingData) {
+            return JSON.stringify({ ...existingData, lastUpdateAttempt: updateAttemptTime, lastUpdateFailed: true });
+        }
+        throw new Error(`Market data unavailable: ${lastError}`);
+    }
+
+    const valid = allCoins.filter(c => {
+        if (!c || !c.symbol || c.price_change_percentage_24h == null) return false;
+        return !exclusionSet.has(c.symbol.toLowerCase());
+    });
     
     const formatCoin = (coin) => ({
         id: coin.id, symbol: coin.symbol, name: coin.name, image: coin.image, 
@@ -435,9 +439,11 @@ async function updateMarketData(env, existingData, isDeepScan, signal = null) {
         price_change_percentage_30d: coin.price_change_percentage_30d_in_currency,
         price_change_percentage_1y: coin.price_change_percentage_1y_in_currency
     });
-    
+
     return JSON.stringify({
         timestamp: Date.now(),
+        lastUpdateAttempt: updateAttemptTime,
+        lastUpdateFailed: false,
         gainers: [...valid].sort((a,b)=>b.price_change_percentage_24h-a.price_change_percentage_24h).slice(0,50).map(formatCoin),
         losers: [...valid].sort((a,b)=>a.price_change_percentage_24h-b.price_change_percentage_24h).slice(0,50).map(formatCoin)
     });
