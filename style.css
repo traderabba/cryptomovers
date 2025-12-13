@@ -112,7 +112,7 @@ h2 { font-size: 20px; display: inline-flex; align-items: center; gap: 10px; font
 
 .bubble:hover { transform: translateY(-5px); z-index: 10; }
 
-.bubble img { width: 40px; height: 40px; border-radius: 50%; margin-bottom: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+.bubble img { width: 40px; height: 40px; border-radius: 50%; margin-bottom: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); object-fit: cover; will-change: transform; transform: translateZ(0); }
 .symbol { font-weight: 800; color: var(--dark); font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
 .percent { font-weight: 700; font-size: 13px; }
 .gainer-percent { color: #15803d; }
