@@ -1,30 +1,29 @@
-<!DOCTYPE html>
-<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    
+
     <title>DEX Movers - Top Gainers on Solana, Ethereum, BNB & Base</title>
     <meta name="description" content="Track top performing liquidity pools and tokens across Solana, Ethereum, BNB Chain, and Base. Real-time DEX gainers and losers.">
-    <meta name="keywords" content="dex gainers, solana top gainers, base chain movers, raydium gainers, uniswap top tokens, geckoterminal api">
+    <meta name="keywords" content="dex gainers, solana top gainers, base chain movers, raydium gainers, uniswap top tokens, geckoterminal api, crypto tracker">
     <meta name="author" content="TraderAbba">
 
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://cryptomovers.pages.dev/dex-movers.html">
-    <meta property="og:title" content="DEX Movers | Cross-Chain Analytics">
+    <meta property="og:url" content="https://cryptomovers.pages.dev/">
+    <meta property="og:title" content="DEX Movers | Multi-Chain Tracker">
     <meta property="og:description" content="Top 20 Gainers & Losers on Solana, Ethereum, BNB, and Base.">
     <meta property="og:image" content="https://cryptomovers.pages.dev/images/social-media.jpg">
 
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="DEX Movers | Cross-Chain Analytics">
+    <meta name="twitter:title" content="DEX Movers | Multi-Chain Tracker">
     <meta name="twitter:description" content="Top 20 Gainers & Losers on Solana, Ethereum, BNB, and Base.">
     <meta name="twitter:image" content="https://cryptomovers.pages.dev/images/social-media.jpg">
-    
-    <link rel="icon" type="image/png" href="/images/bullish.png">
+
     <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/png" href="/images/bullish.png">
     <script src="/scripts/html2canvas.min.js"></script>
 </head>
+
 <body>
 
     <nav class="navbar">
@@ -33,16 +32,16 @@
                 <img src="/images/bullish.png" alt="Logo">
                 <span>Crypto <span class="highlight">Movers</span></span>
             </a>
-            
+
             <div class="menu-toggle" id="mobile-menu">
                 <span class="bar"></span><span class="bar"></span><span class="bar"></span>
             </div>
             <ul class="nav-menu">
                 <li class="nav-item"><a href="index.html" class="nav-link">Home</a></li>
-                <li class="nav-item"><a href="dex-movers.html" class="nav-link active">DEX Movers</a></li>  
+                <li class="nav-item"><a href="dex-movers.html" class="nav-link active">DEX Movers</a></li>
                 <li class="nav-item"><a href="more-tools.html" class="nav-link">More Tools</a></li>
                 <li class="nav-item"><a href="about-us.html" class="nav-link">About Us</a></li>
-                <li class="nav-item"><a href="contact-us.html" class="nav-link">Contact Us</a></li>            
+                <li class="nav-item"><a href="contact-us.html" class="nav-link">Contact Us</a></li>
                 <li class="nav-item">
                     <a href="https://x.com/traderabba" target="_blank" class="nav-btn">Follow Dev</a>
                 </li>
@@ -56,10 +55,11 @@
     </div>
 
     <main id="app-content">
+
         <div class="hero">
-            <h1>DEX Market Pulse</h1>
-            <p class="sub-text">Top On-Chain Movers (24H)</p>
-            
+            <h1>On-Chain Pulse</h1>
+            <p class="sub-text">Live Trending Pools & Top Movers</p>
+
             <div class="controls" data-html2canvas-ignore="true">
                 <button class="btn btn-gainers" id="btn-gain" onclick="captureSection('gainers')">
                     <i class="fas fa-camera"></i> Snap Gainers
@@ -67,13 +67,12 @@
                 <button class="btn btn-losers" id="btn-lose" onclick="captureSection('losers')">
                     <i class="fas fa-camera"></i> Snap Losers
                 </button>
-                
+
                 <div class="select-wrapper">
-                    <select id="network-select" class="btn btn-sort" style="background-color: #0f172a;" onchange="handleNetworkChange(this.value)">
-                        <option value="all" selected>All Networks</option>
-                        <option value="solana">Solana</option>
-                        <option value="eth">Ethereum</option>
-                        <option value="bsc">BNB Chain</option>
+                    <select id="network-select" class="btn btn-sort" onchange="changeNetwork(this.value)">
+                        <option value="solana" selected>Solana</option>
+                        <option value="ethereum">Ethereum</option>
+                        <option value="bnb">BNB Chain</option>
                         <option value="base">Base</option>
                     </select>
                 </div>
@@ -84,48 +83,52 @@
                         <option value="10">Top 10</option>
                         <option value="20" selected>Top 20</option>
                         <option value="30">Top 30</option>
+                        <option value="40">Top 40</option>
+                        <option value="50">Top 50</option>
                     </select>
                 </div>
             </div>
-            
-            <div id="status-msg" role="status">Connecting to GeckoTerminal...</div>
         </div>
 
         <section id="gainers-wrapper" class="market-section">
             <div class="section-header">
-                <h2><i class="fas fa-bolt" style="color:#10b981;"></i> Top Gainers <span id="gainers-network-label" style="font-size: 0.8em; opacity: 0.7; margin-left: 10px;">(Global)</span></h2>
+                <h2><i class="fas fa-rocket" style="color:#10b981;"></i> Top Gainers</h2>
             </div>
             <div class="container" id="gainers-list"></div>
         </section>
 
         <section id="losers-wrapper" class="market-section">
             <div class="section-header">
-                <h2><i class="fas fa-skull" style="color:#ef4444;"></i> Top Losers <span id="losers-network-label" style="font-size: 0.8em; opacity: 0.7; margin-left: 10px;">(Global)</span></h2>
+                <h2><i class="fas fa-skull" style="color:#ef4444;"></i> Top Losers</h2>
             </div>
             <div class="container" id="losers-list"></div>
         </section>
 
         <footer>
             <div class="footer-content">
-                <div class="footer-logo">  <img src="/images/bullish.png" alt="icon"> Crypto Movers</div>
+                <div class="footer-logo">
+                    <img src="/images/bullish.png" alt="icon"> Crypto Movers
+                </div>
+
                 <div class="footer-nav">
                     <a href="index.html" title="Homepage">Home</a>
-                    <a href="dex-movers.html">DEX Movers</a>
-                    <a href="contact-us.html">Contact Us</a>
+                    <a href="about-us.html">About</a>
+                    <a href="contact-us.html">Contact</a>
                 </div>
+
                 <div class="copyright">
-                    &copy; 2025 Crypto Movers v2.0. Data by GeckoTerminal. Made With 💚 by <a href="https://linktr.ee/traderabba" target="_blank">@TraderAbba</a>
+                    &copy; 2025 Crypto Movers. Powered by CoinGecko.
                     <br>
                     <span id="timestamp" style="color: #64748b;">Waiting for data...</span>
                 </div>
             </div>
         </footer>
-    </main>
+        </main>
 
     <div id="coin-modal" class="modal-overlay">
         <div class="modal-content">
             <button class="close-modal" onclick="closeModal()">&times;</button>
-            
+
             <div class="modal-header">
                 <img id="m-img" src="" alt="">
                 <div>
@@ -134,10 +137,10 @@
                 </div>
                 <div id="m-price" class="modal-price">$0.00</div>
             </div>
-    
+
             <div class="modal-grid">
                 <div class="stat-box">
-                    <span class="label">Market Cap</span>
+                    <span class="label">FDV / M.Cap</span>
                     <span class="value" id="m-cap">$0</span>
                 </div>
                 <div class="stat-box">
@@ -145,23 +148,31 @@
                     <span class="value" id="m-vol">$0</span>
                 </div>
             </div>
-    
+
             <div class="modal-history">
+                <h3>Price Performance</h3>
+                <div class="history-row">
+                    <span>30m Change</span> <span id="m-30m" class="percent-tag gray">-</span>
                 </div>
-    
+                <div class="history-row">
+                    <span>1h Change</span> <span id="m-1h" class="percent-tag gray">-</span>
+                </div>
+                <div class="history-row">
+                    <span>6h Change</span> <span id="m-6h" class="percent-tag gray">-</span>
+                </div>
+                <div class="history-row">
+                    <span>24h Change</span> <span id="m-24h" class="percent-tag gray">-</span>
+                </div>
+            </div>
+
             <div class="modal-actions">
-                <a id="m-link-cg" href="#" target="_blank" class="action-btn cg-btn">
-                     <i class="fas fa-coins"></i> CoinGecko
-                </a>
-                <a id="m-link-tv" href="#" target="_blank" class="action-btn tv-btn">
-                    <i class="fas fa-chart-line"></i> TradingView
+                <a id="m-link-pool" href="#" target="_blank" class="action-btn cg-btn">
+                    <i class="fas fa-external-link-alt"></i> Gecko Terminal
                 </a>
             </div>
         </div>
     </div>
 
-    <script src="/scripts/common.js"></script>
-<script src="script/dex.js"></script>
-
+    <script src="common.js"></script>
+    <script src="dex.js"></script>
 </body>
-</html>
