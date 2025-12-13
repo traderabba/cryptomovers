@@ -1,6 +1,8 @@
 // _worker.js
 
-// === CONFIGURATION ===
+// ==============================================================================
+// 1. CONFIGURATION: PRIMARY (CRYPTO MOVERS / COINGECKO)
+// ==============================================================================
 const CACHE_KEY = "market_data_v7"; 
 const CACHE_LOCK_KEY = "market_data_lock";
 const UPDATE_INTERVAL_MS = 15 * 60 * 1000; 
@@ -9,13 +11,12 @@ const MIN_RETRY_DELAY_MS = 2 * 60 * 1000;
 const TIMEOUT_MS = 45000; 
 const LOCK_TIMEOUT_MS = 120000; 
 
-// === EXCLUSION FILES ===
 const EXCLUSION_FILES = [
     "/exclusions/stablecoins-exclusion-list.json",
     "/exclusions/wrapped-tokens-exclusion-list.json"
 ];
 
-const HEADERS = {
+const PRIMARY_HEADERS = {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
     "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
@@ -30,136 +31,190 @@ const API_HEADERS = {
     "Referer": "https://www.coingecko.com/"
 };
 
+// ==============================================================================
+// 2. CONFIGURATION: DEX MOVERS (GECKOTERMINAL)
+// ==============================================================================
+const DEX_HEADERS = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "public, max-age=30", 
+};
+
+const DEX_KV_PREFIX = "dex_cache_";
+const DEX_IMG_PREFIX = "img_";
+const DEX_SOFT_REFRESH_MS = 4 * 60 * 1000;   // 4 Minutes
+const DEX_HARD_REFRESH_MS = 5 * 60 * 1000;   // 5 Minutes
+
+const DEX_NETWORK_MAP = {
+    'solana': 'solana',
+    'ethereum': 'eth',
+    'bnb': 'bsc',
+    'base': 'base'
+};
+
+// ==============================================================================
+// 3. MAIN WORKER LOGIC
+// ==============================================================================
 export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
 
-        // === ROUTE 1: DYNAMIC SITEMAP ===
+        // --- ROUTE A: DYNAMIC SITEMAP (From Primary) ---
         if (url.pathname === "/sitemap.xml") {
-            const baseUrl = "https://cryptomovers.pages.dev";
-            const now = new Date().toISOString();
-            
-            try {
-                const manifestRes = await env.ASSETS.fetch(new URL("/urls.json", request.url));
-                
-                if (!manifestRes.ok) {
-                    return new Response("Error: urls.json not found", { status: 500 });
-                }
+            return handleSitemap(request, env);
+        }
 
-                const pages = await manifestRes.json();
+        // --- ROUTE B: API STATS (SHARED) ---
+        // This handles both CoinGecko (Primary) and GeckoTerminal (Dex)
+        // logic based on the presence of the 'network' query param.
+        if (url.pathname === "/api/stats") {
+            // CHECK: Is this for Dex Movers? (Has 'network' param)
+            const network = url.searchParams.get("network");
+            if (network) {
+                return handleDexStatsWithCache(request, env, ctx, network);
+            }
 
-                let sitemap = `<?xml version="1.0" encoding="UTF-8"?>
+            // ELSE: It is for Crypto Movers (Primary/CoinGecko)
+            return handlePrimaryStats(request, env, ctx);
+        }
+
+        // --- ROUTE C: IMAGE PROXY (From Dex) ---
+        if (url.pathname === "/api/image-proxy") {
+            return handleImageProxy(request, env, url);
+        }
+
+        // --- FALLBACK: Serve Static Assets (HTML/CSS/JS) ---
+        return env.ASSETS.fetch(request);
+    }
+};
+
+// ==============================================================================
+// 4. HANDLERS: PRIMARY (COINGECKO LOGIC)
+// ==============================================================================
+
+async function handleSitemap(request, env) {
+    const baseUrl = "https://cryptomovers.pages.dev";
+    const now = new Date().toISOString();
+    
+    try {
+        const manifestRes = await env.ASSETS.fetch(new URL("/urls.json", request.url));
+        
+        if (!manifestRes.ok) {
+            return new Response("Error: urls.json not found", { status: 500 });
+        }
+
+        const pages = await manifestRes.json();
+
+        let sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`;
 
-                pages.forEach(page => {
-                    sitemap += `
+        pages.forEach(page => {
+            sitemap += `
   <url>
     <loc>${baseUrl}${page.path}</loc>
     <lastmod>${now}</lastmod>
     <changefreq>${page.changefreq}</changefreq>
     <priority>${page.priority}</priority>
   </url>`;
-                });
+        });
 
-                sitemap += `\n</urlset>`;
+        sitemap += `\n</urlset>`;
 
-                return new Response(sitemap, {
-                    headers: { 
-                        "Content-Type": "application/xml", 
-                        "Cache-Control": "no-cache, no-store, must-revalidate" 
-                    }
-                });
-            } catch (err) {
-                return new Response("Sitemap Error: " + err.message, { status: 500 });
+        return new Response(sitemap, {
+            headers: { 
+                "Content-Type": "application/xml", 
+                "Cache-Control": "no-cache, no-store, must-revalidate" 
             }
+        });
+    } catch (err) {
+        return new Response("Sitemap Error: " + err.message, { status: 500 });
+    }
+}
+
+async function handlePrimaryStats(request, env, ctx) {
+    if (!env.KV_STORE) {
+        return new Response(JSON.stringify({ error: true, message: "KV_STORE binding missing" }), { status: 500, headers: PRIMARY_HEADERS });
+    }
+
+    try {
+        const [cachedRaw, lock] = await Promise.all([
+            env.KV_STORE.get(CACHE_KEY),
+            env.KV_STORE.get(CACHE_LOCK_KEY)
+        ]);
+        
+        let cachedData = null;
+        let dataAge = 0;
+        const now = Date.now();
+
+        if (cachedRaw) {
+            try {
+                cachedData = JSON.parse(cachedRaw);
+                dataAge = now - (cachedData.timestamp || 0);
+            } catch (e) { console.error("Cache corrupted:", e); }
         }
 
-        // === ROUTE 2: MARKET DATA API ===
-        if (url.pathname === "/api/stats") {
-            if (!env.KV_STORE) {
-                return new Response(JSON.stringify({ error: true, message: "KV_STORE binding missing" }), { status: 500, headers: HEADERS });
-            }
+        const isUpdating = lock && (now - parseInt(lock)) < LOCK_TIMEOUT_MS;
 
-            try {
-                const [cachedRaw, lock] = await Promise.all([
-                    env.KV_STORE.get(CACHE_KEY),
-                    env.KV_STORE.get(CACHE_LOCK_KEY)
-                ]);
+        // Strategy 1: Fresh Cache
+        if (cachedData && dataAge < SOFT_REFRESH_MS) {
+            return new Response(cachedRaw, { headers: { ...PRIMARY_HEADERS, "X-Source": "Cache-Fresh" } });
+        }
+
+        // Strategy 2: Update in Progress (Return Stale)
+        if (isUpdating && cachedData) {
+            return new Response(cachedRaw, { headers: { ...PRIMARY_HEADERS, "X-Source": "Cache-UpdateInProgress" } });
+        }
+
+        // Strategy 3: Stale but Proactive Update
+        if (cachedData && dataAge >= SOFT_REFRESH_MS) {
+            const lastAttemptAge = now - (cachedData.lastUpdateAttempt || 0);
+            
+            if (lastAttemptAge >= MIN_RETRY_DELAY_MS) {
+                console.log("Triggering Background Update...");
                 
-                let cachedData = null;
-                let dataAge = 0;
-                const now = Date.now();
-
-                if (cachedRaw) {
-                    try {
-                        cachedData = JSON.parse(cachedRaw);
-                        dataAge = now - (cachedData.timestamp || 0);
-                    } catch (e) { console.error("Cache corrupted:", e); }
-                }
-
-                const isUpdating = lock && (now - parseInt(lock)) < LOCK_TIMEOUT_MS;
-
-                if (cachedData && dataAge < SOFT_REFRESH_MS) {
-                    return new Response(cachedRaw, { headers: { ...HEADERS, "X-Source": "Cache-Fresh" } });
-                }
-
-                if (isUpdating && cachedData) {
-                    return new Response(cachedRaw, { headers: { ...HEADERS, "X-Source": "Cache-UpdateInProgress" } });
-                }
-
-                if (cachedData && dataAge >= SOFT_REFRESH_MS) {
-                    const lastAttemptAge = now - (cachedData.lastUpdateAttempt || 0);
-                    
-                    if (lastAttemptAge >= MIN_RETRY_DELAY_MS) {
-                        console.log("Triggering Background Update...");
-                        
-                        await env.KV_STORE.put(CACHE_LOCK_KEY, now.toString(), { expirationTtl: Math.floor(LOCK_TIMEOUT_MS / 1000) });
-                        
-                        ctx.waitUntil(
-                            updateMarketDataSafe(env, cachedData, true)
-                                .finally(() => env.KV_STORE.delete(CACHE_LOCK_KEY).catch(() => {}))
-                        );
-                        
-                        return new Response(cachedRaw, { headers: { ...HEADERS, "X-Source": "Cache-Proactive", "X-Update-Triggered": "Deep-Scan" } });
-                    } else {
-                        return new Response(cachedRaw, { headers: { ...HEADERS, "X-Source": "Cache-RateLimited" } });
-                    }
-                }
-
-                console.log("Cache empty. Starting Sprint...");
                 await env.KV_STORE.put(CACHE_LOCK_KEY, now.toString(), { expirationTtl: Math.floor(LOCK_TIMEOUT_MS / 1000) });
                 
-                try {
-                    const freshJson = await fetchWithTimeout(env, false);
-                    
-                    await env.KV_STORE.put(CACHE_KEY, freshJson, { expirationTtl: 172800 });
-                    await env.KV_STORE.delete(CACHE_LOCK_KEY).catch(() => {});
-                    
-                    return new Response(freshJson, { headers: { ...HEADERS, "X-Source": "Live-Fetch-Sprint" } });
-                } catch (error) {
-                    await env.KV_STORE.delete(CACHE_LOCK_KEY).catch(() => {});
-                    
-                    if (cachedData) {
-                        return new Response(JSON.stringify(cachedData), { headers: { ...HEADERS, "X-Source": "Cache-Fallback-Error" } });
-                    }
-                    throw error;
-                }
-
-            } catch (err) {
-                return new Response(JSON.stringify({ error: true, message: err.message }), { status: 500, headers: HEADERS });
+                ctx.waitUntil(
+                    updateMarketDataSafe(env, cachedData, true)
+                        .finally(() => env.KV_STORE.delete(CACHE_LOCK_KEY).catch(() => {}))
+                );
+                
+                return new Response(cachedRaw, { headers: { ...PRIMARY_HEADERS, "X-Source": "Cache-Proactive", "X-Update-Triggered": "Deep-Scan" } });
+            } else {
+                return new Response(cachedRaw, { headers: { ...PRIMARY_HEADERS, "X-Source": "Cache-RateLimited" } });
             }
         }
+
+        // Strategy 4: Cache Empty (Blocking Sprint)
+        console.log("Cache empty. Starting Sprint...");
+        await env.KV_STORE.put(CACHE_LOCK_KEY, now.toString(), { expirationTtl: Math.floor(LOCK_TIMEOUT_MS / 1000) });
         
-        return env.ASSETS.fetch(request);
+        try {
+            const freshJson = await fetchWithTimeout(env, false);
+            
+            await env.KV_STORE.put(CACHE_KEY, freshJson, { expirationTtl: 172800 });
+            await env.KV_STORE.delete(CACHE_LOCK_KEY).catch(() => {});
+            
+            return new Response(freshJson, { headers: { ...PRIMARY_HEADERS, "X-Source": "Live-Fetch-Sprint" } });
+        } catch (error) {
+            await env.KV_STORE.delete(CACHE_LOCK_KEY).catch(() => {});
+            
+            if (cachedData) {
+                return new Response(JSON.stringify(cachedData), { headers: { ...PRIMARY_HEADERS, "X-Source": "Cache-Fallback-Error" } });
+            }
+            throw error;
+        }
+
+    } catch (err) {
+        return new Response(JSON.stringify({ error: true, message: err.message }), { status: 500, headers: PRIMARY_HEADERS });
     }
-};
+}
 
-// HELPERS
+// === PRIMARY HELPERS ===
 
-// === NEW: FETCH EXCLUSION LISTS ===
 async function getExclusions(env) {
     const exclusionSet = new Set();
-    const baseUrl = "http://placeholder"; // Internal fetch base
+    const baseUrl = "http://placeholder"; 
 
     await Promise.all(EXCLUSION_FILES.map(async (filePath) => {
         try {
@@ -167,7 +222,6 @@ async function getExclusions(env) {
             if (res.ok) {
                 const list = await res.json();
                 if (Array.isArray(list)) {
-                    // Add all to Set, normalized to lowercase
                     list.forEach(item => exclusionSet.add(item.toLowerCase()));
                 }
             }
@@ -207,7 +261,6 @@ async function updateMarketData(env, existingData, isDeepScan, signal = null) {
     let hitRateLimit = false;
     let lastError = null;
     
-    // 1. Fetch Exclusion Lists FIRST
     const exclusionSet = await getExclusions(env);
     console.log(`Loaded ${exclusionSet.size} exclusions.`);
 
@@ -268,19 +321,13 @@ async function updateMarketData(env, existingData, isDeepScan, signal = null) {
         throw new Error(`Market data unavailable: ${lastError}`);
     }
 
-    // 2. Filter using the Exclusion Set
     const valid = allCoins.filter(c => {
-        // Basic Checks
         if (!c || !c.symbol || c.price_change_percentage_24h == null || c.current_price == null) return false;
-        
-        // Exclusion Check (Case Insensitive)
         const symbol = c.symbol.toLowerCase();
         if (exclusionSet.has(symbol)) return false;
-
         return true;
     });
     
-    // Format Data
     const formatCoin = (coin) => ({
         id: coin.id,
         symbol: coin.symbol,
@@ -303,7 +350,7 @@ async function updateMarketData(env, existingData, isDeepScan, signal = null) {
         lastUpdateAttempt: updateAttemptTime,
         lastUpdateFailed: false,
         totalScanned: allCoins.length,
-        excludedCount: allCoins.length - valid.length, // Added stat for debugging
+        excludedCount: allCoins.length - valid.length,
         isPartial: hitRateLimit,
         gainers,
         losers
@@ -312,4 +359,229 @@ async function updateMarketData(env, existingData, isDeepScan, signal = null) {
     const jsonString = JSON.stringify(finalObject);
     await env.KV_STORE.put(CACHE_KEY, jsonString, { expirationTtl: 172800 });
     return jsonString;
+}
+
+// ==============================================================================
+// 5. HANDLERS: DEX MOVERS (GECKOTERMINAL + IMAGE PROXY)
+// ==============================================================================
+
+// Prevents 403 Forbidden errors from GeckoTerminal
+function getStealthHeaders() {
+    const agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+    ];
+    return {
+        "User-Agent": agents[Math.floor(Math.random() * agents.length)],
+        "Accept": "application/json",
+        "Referer": "https://www.geckoterminal.com/",
+        "Origin": "https://www.geckoterminal.com"
+    };
+}
+
+async function handleImageProxy(request, env, url) {
+    const targetUrl = url.searchParams.get("url");
+    if (!targetUrl) return new Response("Missing URL", { status: 400 });
+
+    // 1. Try to get from Main Database (KV)
+    if (env.KV_STORE) {
+        const imgKey = DEX_IMG_PREFIX + btoa(targetUrl);
+        const { value, metadata } = await env.KV_STORE.getWithMetadata(imgKey, { type: "stream" });
+        
+        if (value) {
+            return new Response(value, {
+                headers: {
+                    "Content-Type": metadata?.contentType || "image/png",
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "public, max-age=604800", 
+                    "X-Source": "Worker-KV-Cache"
+                }
+            });
+        }
+    }
+
+    // 2. If not in DB, download it live
+    try {
+        const imgRes = await fetch(decodeURIComponent(targetUrl), {
+            headers: { "User-Agent": "Mozilla/5.0" }
+        });
+        
+        const newHeaders = new Headers(imgRes.headers);
+        newHeaders.set("Access-Control-Allow-Origin", "*");
+        newHeaders.set("Cache-Control", "public, max-age=86400"); // 7 Days
+
+        return new Response(imgRes.body, {
+            status: imgRes.status,
+            headers: newHeaders
+        });
+    } catch (e) {
+        return new Response("Proxy Error", { status: 500 });
+    }
+}
+
+async function handleDexStatsWithCache(request, env, ctx, network) {
+    if (!env.KV_STORE) {
+        return handleDexStats(network); 
+    }
+
+    const cacheKey = `${DEX_KV_PREFIX}${network}`;
+    const now = Date.now();
+    let cached = null;
+    let age = 0;
+
+    try {
+        const raw = await env.KV_STORE.get(cacheKey);
+        if (raw) {
+            cached = JSON.parse(raw);
+            age = now - (cached.timestamp || 0);
+        }
+    } catch (e) { console.error("KV Error", e); }
+
+    // Strategy A: Fresh Cache (0-4 mins)
+    if (cached && age < DEX_SOFT_REFRESH_MS) {
+        return new Response(JSON.stringify(cached), { headers: { ...DEX_HEADERS, "X-Source": "Cache-Fresh" } });
+    }
+
+    // Strategy B: Stale Cache (4-5 mins)
+    if (cached && age < DEX_HARD_REFRESH_MS) {
+        ctx.waitUntil(refreshDexData(env, network, cacheKey, ctx));
+        return new Response(JSON.stringify(cached), { headers: { ...DEX_HEADERS, "X-Source": "Cache-Stale-Background" } });
+    }
+
+    // Strategy C: Expired (>5 mins)
+    console.log(`Cache expired for ${network}. Fetching live...`);
+    try {
+        const freshData = await refreshDexData(env, network, cacheKey, ctx);
+        return new Response(JSON.stringify(freshData), { headers: { ...DEX_HEADERS, "X-Source": "Live-Fetch" } });
+    } catch (e) {
+        if (cached) return new Response(JSON.stringify(cached), { headers: { ...DEX_HEADERS, "X-Source": "Cache-Fallback" } });
+        return new Response(JSON.stringify({ error: true, message: e.message }), { status: 200, headers: DEX_HEADERS });
+    }
+}
+
+async function refreshDexData(env, network, key, ctx) {
+    const data = await handleDexStats(network); 
+    
+    if (data && !data.error && data.gainers) {
+        await env.KV_STORE.put(key, JSON.stringify(data), { expirationTtl: 1800 });
+        
+        if (ctx && ctx.waitUntil) {
+            const topTokens = [
+                ...data.gainers.slice(0, 20), 
+                ...data.losers.slice(0, 20)
+            ];
+            ctx.waitUntil(backgroundCacheImages(env, topTokens));
+        }
+    }
+    return data;
+}
+
+async function backgroundCacheImages(env, tokens) {
+    if (!env.KV_STORE) return;
+
+    const fetches = tokens.map(async (token) => {
+        if (!token.image || token.image.includes("bullish.png")) return;
+
+        const imgUrl = token.image;
+        const imgKey = DEX_IMG_PREFIX + btoa(imgUrl); 
+
+        try {
+            const res = await fetch(imgUrl, { 
+                headers: { "User-Agent": "Mozilla/5.0" } 
+            });
+
+            if (res.ok) {
+                const blob = await res.arrayBuffer();
+                const type = res.headers.get("Content-Type") || "image/png";
+
+                await env.KV_STORE.put(imgKey, blob, { 
+                    expirationTtl: 604800, 
+                    metadata: { contentType: type } 
+                });
+            }
+        } catch (err) {
+            console.log(`Failed to cache image for ${token.symbol}`);
+        }
+    });
+
+    await Promise.all(fetches);
+}
+
+async function handleDexStats(networkKey) {
+    const apiSlug = DEX_NETWORK_MAP[networkKey];
+    if (!apiSlug) throw new Error("Invalid Network");
+
+    try {
+        // Fetch 5 pages to get deep data
+        const promises = [1, 2, 3, 4, 5].map(page => 
+            fetch(`https://api.geckoterminal.com/api/v2/networks/${apiSlug}/trending_pools?include=base_token&page=${page}`, { 
+                headers: getStealthHeaders() 
+            })
+        );
+
+        const responses = await Promise.all(promises);
+        
+        let allPools = [];
+        let allIncluded = [];
+
+        for (const res of responses) {
+            if (res.ok) {
+                const data = await res.json();
+                if (data.data) allPools = allPools.concat(data.data);
+                if (data.included) allIncluded = allIncluded.concat(data.included);
+            }
+        }
+
+        if (allPools.length === 0) throw new Error("Gecko API: No Pools Found");
+
+        let formatted = allPools.map(pool => {
+            const baseTokenId = pool.relationships?.base_token?.data?.id;
+            const tokenData = allIncluded.find(i => i.id === baseTokenId && i.type === 'token');
+            const attr = pool.attributes;
+            const changes = attr.price_change_percentage || {};
+
+            return {
+                symbol: attr.name.split('/')[0].trim(),
+                name: tokenData?.attributes?.name || attr.name,
+                image: tokenData?.attributes?.image_url || "/images/bullish.png",
+                price: parseFloat(attr.base_token_price_usd) || 0,
+                change_30m: parseFloat(changes.m30) || 0,
+                change_1h: parseFloat(changes.h1) || 0,
+                change_6h: parseFloat(changes.h6) || 0,
+                change_24h: parseFloat(changes.h24) || 0,
+                volume_24h: parseFloat(attr.volume_usd?.h24) || 0,
+                fdv: parseFloat(attr.fdv_usd) || 0,
+                address: attr.address
+            };
+        });
+
+        // FILTER: Remove scams ($0 price or <$1000 volume)
+        formatted = formatted.filter(p => p.price > 0 && p.volume_24h > 1000);
+
+        // Deduplicate
+        const unique = [];
+        const seen = new Set();
+        for (const item of formatted) {
+            if (!seen.has(item.symbol)) {
+                seen.add(item.symbol);
+                unique.push(item);
+            }
+        }
+
+        const onlyGainers = unique.filter(x => x.change_24h > 0);
+        const onlyLosers = unique.filter(x => x.change_24h < 0);
+
+        const gainers = onlyGainers.sort((a, b) => b.change_24h - a.change_24h).slice(0, 50);
+        const losers = onlyLosers.sort((a, b) => a.change_24h - b.change_24h).slice(0, 50);
+
+        return {
+            timestamp: Date.now(),
+            network: networkKey,
+            gainers,
+            losers
+        };
+
+    } catch (e) {
+        throw new Error(`Worker Error: ${e.message}`);
+    }
 }
