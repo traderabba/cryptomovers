@@ -1,11 +1,12 @@
-// Universal UI Logic
+// scripts/common.js
+// Universal UI Logic (Smart Title + Original Common.js Styling)
 
 document.addEventListener('DOMContentLoaded', () => {
     setupMenu();
     setupModalClosers();
 });
 
-// MENU LOGIC
+// === 1. MENU LOGIC ===
 function setupMenu() {
     const hamburger = document.getElementById('mobile-menu');
     const navMenu = document.querySelector('.nav-menu');
@@ -39,28 +40,19 @@ function setupMenu() {
     }
 }
 
-// MODAL LOGIC
+// === 2. MODAL LOGIC ===
 function setupModalClosers() {
     const modal = document.getElementById('coin-modal');
     const closeBtn = document.querySelector('.close-modal'); 
 
-    // Click the "X" Button
     if (closeBtn) {
-        closeBtn.onclick = function() {
-            closeModal();
-        }
+        closeBtn.onclick = function() { closeModal(); };
     }
 
-    // Click Outsie
     if (modal) {
         window.onclick = function(event) {
-           
-            if (event.target === modal) {
-                closeModal();
-            }
+            if (event.target === modal) closeModal();
         }
-        
-        // C. Escape Key Support (Bonus accessibility)
         window.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') closeModal();
         });
@@ -72,8 +64,13 @@ function closeModal() {
     if(modal) modal.classList.remove('active');
 }
 
-// SNAPSHOT LOGIC
+// === 3. SNAPSHOT LOGIC (Smart Title + Common.js Styling) ===
 async function captureSection(type) {
+    if (typeof html2canvas === 'undefined') {
+        alert("Error: html2canvas library missing. Please reload.");
+        return;
+    }
+
     const btn = document.getElementById(type === 'gainers' ? 'btn-gain' : 'btn-lose');
     if (!btn) return;
 
@@ -81,19 +78,35 @@ async function captureSection(type) {
     const sourceListId = type === 'gainers' ? 'gainers-list' : 'losers-list';
     const listElement = document.getElementById(sourceListId);
     
-    if (!listElement) return;
+    if (!listElement || listElement.children.length === 0) {
+        alert("No data to snapshot!");
+        return;
+    }
 
     const count = listElement.children.length;
 
     // --- SMART TITLE DETECTION ---
-    const isDexPage = window.location.pathname.includes('dex-movers');
-    const pageLabel = isDexPage ? 'DEX' : 'Crypto';
+    let pageLabel = 'Crypto'; 
+    const dexBtn = document.getElementById('btn-dex');
     
+    // Check Active Toggle
+    if (dexBtn && dexBtn.classList.contains('active')) {
+        const netSelect = document.getElementById('network-select');
+        if (netSelect) {
+            const val = netSelect.value;
+            pageLabel = val.charAt(0).toUpperCase() + val.slice(1); // e.g. "Solana"
+        } else {
+            pageLabel = 'DEX';
+        }
+    }
+
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating HD...';
     btn.disabled = true;
 
     try {
         const reportCard = document.createElement('div');
+        
+        // STYLE: Matches common.js exactly
         Object.assign(reportCard.style, {
             position: 'absolute', left: '-9999px', top: '0',
             width: '1200px', padding: '60px', borderRadius: '30px',
@@ -105,6 +118,7 @@ async function captureSection(type) {
         const titleText = `${pageLabel} Top ${count} ${type === 'gainers' ? 'Gainers' : 'Losers'} (24H)`;
         const titleColor = type === 'gainers' ? '#15803d' : '#b91c1c';
 
+        // HEADER: Font Size 48px (Restored from common.js)
         reportCard.innerHTML = `
             <div style="text-align: center; margin-bottom: 50px;">
                 <h1 style="font-size: 48px; color: #0f172a; margin: 0; font-weight: 800; letter-spacing: -1px;">
@@ -123,45 +137,74 @@ async function captureSection(type) {
 
         bubbles.forEach(b => {
             const clone = b.cloneNode(true);
-            if (type === 'gainers') clone.classList.add('force-gainer');
-            else clone.classList.add('force-loser');
+            clone.removeAttribute('onclick'); 
+
+            // BUBBLE: Restored common.js styling
+            Object.assign(clone.style, { 
+                width: '100%', height: '180px', margin: '0', 
+                boxShadow: '0 15px 30px rgba(0,0,0,0.08)',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center'
+                // Note: common.js didn't force borders/bg here, it let the class 'force-gainer' handle it below
+            });
+
+            if (type === 'gainers') {
+                clone.classList.add('force-gainer'); 
+                // Explicitly set for snapshot safety
+                clone.style.backgroundColor = '#ecfdf5'; 
+                clone.style.borderColor = '#6ee7b7';
+                clone.style.borderWidth = '3px';
+                clone.style.borderStyle = 'solid';
+            } else {
+                clone.classList.add('force-loser');
+                clone.style.backgroundColor = '#fef2f2';
+                clone.style.borderColor = '#fca5a5';
+                clone.style.borderWidth = '3px';
+                clone.style.borderStyle = 'solid';
+            }
             
-            Object.assign(clone.style, { width: '100%', height: '180px', margin: '0', boxShadow: '0 15px 30px rgba(0,0,0,0.08)' });
-            
+            // IMAGE: 64px (Restored from common.js)
             const img = clone.querySelector('img');
-            Object.assign(img.style, { width: '64px', height: '64px', marginBottom: '12px' });
+            if (img) {
+                if(img.src.startsWith('http')) img.crossOrigin = "anonymous";
+                Object.assign(img.style, { width: '64px', height: '64px', marginBottom: '12px' });
+            }
             
+            // TEXT: 22px & 20px (Restored from common.js)
             const symbol = clone.querySelector('.symbol');
-            symbol.style.fontSize = '22px';
+            if(symbol) symbol.style.fontSize = '22px';
             
             const percent = clone.querySelector('.percent');
-            percent.style.fontSize = '20px';
+            if(percent) percent.style.fontSize = '20px';
             
             gridContainer.appendChild(clone);
         });
 
         reportCard.appendChild(gridContainer);
         
-        // FOOTER
+        // FOOTER: Restored Credit
         reportCard.insertAdjacentHTML('beforeend', `
             <div style="font-size: 18px; color: #64748b; font-weight: 600; margin-top: 30px; display:flex; align-items:center; gap:10px;">
                 <img src="/images/bullish.png" style="width:30px;">
-         Generated on https://cryptomovers.pages.dev | by @TraderAbba
+                Generated on https://cryptomovers.pages.dev | by @TraderAbba
             </div>
         `);
 
         document.body.appendChild(reportCard);
         
+        await new Promise(r => setTimeout(r, 100));
+
+        // SCALE: 3 (Restored from common.js)
         const canvas = await html2canvas(reportCard, { scale: 3, useCORS: true, backgroundColor: null });
         const link = document.createElement('a');
         link.download = `CTDGL_${pageLabel}_Top${count}_${new Date().toISOString().split('T')[0]}.png`;
         link.href = canvas.toDataURL("image/png");
         link.click();
+        
         document.body.removeChild(reportCard);
 
     } catch (err) {
         console.error("Snapshot failed:", err);
-        alert("Failed to create report.");
+        alert("Snapshot Error. Please try again.");
     } finally {
         btn.innerHTML = originalText;
         btn.disabled = false;
