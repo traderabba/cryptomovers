@@ -1,12 +1,14 @@
+// _worker.js
+
 // === CONFIGURATION ===
 const CACHE_KEY = "market_data_v7"; 
 const CACHE_LOCK_KEY = "market_data_lock";
-const UPDATE_INTERVAL_MS = 10 * 60 * 1000; // Reference target (10 mins)
-const SOFT_REFRESH_MS = 8 * 60 * 1000;     // 8 mins: Trigger background update
-const HARD_EXPIRY_MS = 15 * 60 * 1000;     // 15 mins: Data is "Ancient", force wait
-const MIN_RETRY_DELAY_MS = 1 * 60 * 1000;  
+const UPDATE_INTERVAL_MS = 10 * 60 * 1000; // (Reference only)
+const SOFT_REFRESH_MS = 8 * 60 * 1000;     // Trigger: Deep scan starts at 8 mins
+const HARD_EXPIRY_MS = 15 * 60 * 1000;     // Ancient: If > 15 mins, force wait
+const MIN_RETRY_DELAY_MS = 1 * 60 * 1000;  // Retry: If fail, try again in 1 min
 const TIMEOUT_MS = 45000; 
-const LOCK_TIMEOUT_MS = 120000;
+const LOCK_TIMEOUT_MS = 120000; 
 
 // === EXCLUSION FILES ===
 const EXCLUSION_FILES = [
@@ -122,12 +124,13 @@ export default {
                                 .finally(() => env.KV_STORE.delete(CACHE_LOCK_KEY).catch(() => {}))
                         );
                         
-                        // === LOGIC FIX ===
-                        // If data is NOT ancient (< 30 mins), serve it immediately (Proactive)
+                        // === LOGIC CHECK ===
+                        // If data is NOT ancient (< 15 mins), serve it immediately (Proactive)
                         if (dataAge < HARD_EXPIRY_MS) {
                             return new Response(cachedRaw, { headers: { ...HEADERS, "X-Source": "Cache-Proactive", "X-Update-Triggered": "Deep-Scan" } });
                         }
-                        // If data IS ancient (> 30 mins), fall through to "Sprint" (Force Wait)
+                        
+                        // If data IS ancient (> 15 mins), fall through to "Sprint" (Force Wait)
                         console.log(`Data is ancient (${(dataAge/60000).toFixed(1)}m). Forcing live fetch.`);
                         
                     } else {
